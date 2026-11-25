@@ -69,13 +69,14 @@ const dd=d=>Math.round((new Date(d+'T00:00')-new Date(td()+'T00:00'))/864e5),uid
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const norm=s=>String(s||'').replace(/[\u064B-\u065F\u0640]/g,'').replace(/[أإآ]/g,'ا').replace(/ى/g,'ي').replace(/ة/g,'ه').replace(/\s+/g,' ').trim().toLowerCase();
 const get=(l,i)=>DB[l].find(o=>o.id==i),nm=(l,i)=>get(l,i)?.name||'—',cn=i=>{const c=get('cases',i);return c?`${c.court} ${c.no}/${c.yr}`:'—'},N=n=>Math.round(+n||0).toLocaleString('en-US');
-const blank=()=>({clients:[],cases:[],hearings:[],tasks:[],fees:[],pays:[],exps:[],docs:[],log:[],audit:[],inv:0,lastExp:'',firm:{name:'مكتب المحاماة',addr:'',phone:''}});
+const blank=()=>({clients:[],cases:[],hearings:[],tasks:[],fees:[],pays:[],exps:[],docs:[],log:[],audit:[],inv:0,del:[],lastExp:'',firm:{name:'مكتب المحاماة',addr:'',phone:''}});
 /* crypto: PBKDF2 key derived once, fresh IV per save */
 const b64=a=>{let s='';for(let i=0;i<a.length;i+=8192)s+=String.fromCharCode(...a.subarray(i,i+8192));return btoa(s)},ub=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 const dk=async(p,s)=>crypto.subtle.deriveKey({name:'PBKDF2',salt:s,iterations:200000,hash:'SHA-256'},await crypto.subtle.importKey('raw',te.encode(p),'PBKDF2',false,['deriveKey']),{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
 const enc=async t=>{const iv=crypto.getRandomValues(new Uint8Array(12));return{s:b64(SALT),i:b64(iv),c:b64(new Uint8Array(await crypto.subtle.encrypt({name:'AES-GCM',iv},KEY,te.encode(t))))}};
 const dec=async(b,k)=>new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:ub(b.i)},k,ub(b.c)));
-const save=async()=>{try{localStorage.setItem(K,JSON.stringify(await enc(JSON.stringify(DB))))}catch(e){toast('تعذر الحفظ',1)}};
+const sv=async()=>localStorage.setItem(K,JSON.stringify(await enc(JSON.stringify(DB))));
+const save=async()=>{try{stamp();await sv()}catch(e){toast('تعذر الحفظ',1)}if(SES&&cloudOn()){clearTimeout(syncT);syncT=setTimeout(syncNow,2500)}};
 const toast=(m,e)=>{const x=document.createElement('div');x.className='t '+(e===1?'e':'o');x.textContent=m;$('#ts').append(x);setTimeout(()=>x.remove(),3000)};
 const ask=(t,body)=>new Promise(r=>{const b=document.createElement('div');b.className='mb';b.innerHTML=`<form class="md"><h3>${t}</h3>${body}<div class="ac"><button type="button" class="b s" data-n>إلغاء</button><button class="b">موافق</button></div></form>`;document.body.append(b);const f=b.firstChild;f.querySelector('input,textarea')?.focus();b.querySelector('[data-n]').onclick=()=>{b.remove();r(null)};f.onsubmit=e=>{e.preventDefault();const d=Object.fromEntries(new FormData(f));b.remove();r(d)}});
 const show=(t,body)=>{const b=document.createElement('div');b.className='mb';b.innerHTML=`<div class="md"><h3>${t}</h3>${body}<div class="ac"><button class="b s" data-n>إغلاق</button></div></div>`;document.body.append(b);b.onclick=e=>{if(e.target===b||e.target.dataset.n!=null)b.remove()}};
@@ -88,7 +89,7 @@ const done=async m=>{await save();m&&toast(m);render()};
 async function unlock(e){e.preventDefault();const p=$('#pw').value;if(p.length<6)return toast('٦ أحرف على الأقل',1);$('#lb').disabled=true;const raw=localStorage.getItem(K);
 try{if(raw){const b=JSON.parse(raw);SALT=ub(b.s);KEY=await dk(p,SALT);DB=Object.assign(blank(),JSON.parse(await dec(b,KEY)))}else{SALT=crypto.getRandomValues(new Uint8Array(16));KEY=await dk(p,SALT);DB=blank();await save()}}
 catch(x){$('#lb').disabled=false;return toast('كلمة المرور خاطئة',1)}
-$('#lb').disabled=false;$('#pw').value='';$('#lock').hidden=true;aud('دخول','فتح المنصة');go('dash');arm()}
+$('#lb').disabled=false;$('#pw').value='';$('#lock').hidden=true;stamp(1);aud('دخول','فتح المنصة');go('dash');arm();SES&&cloudOn()&&syncNow()}
 function lockNow(){DB=null;KEY=null;$('#lock').hidden=false;lbl()}
 const arm=()=>{clearTimeout(lt);lt=setTimeout(()=>DB&&lockNow(),6e5)};['click','keydown','touchstart'].forEach(x=>addEventListener(x,()=>DB&&arm()));
 function lbl(){const n=!localStorage.getItem(K);$('#lb').textContent=n?'إنشاء المنصة':'فتح';$('#lh').textContent=n?'اختر كلمة مرور قوية — لا يمكن استرجاعها. البيانات تُشفَّر بـ AES-256 على جهازك فقط.':'تُقفل المنصة تلقائيًا بعد ١٠ دقائق خمول.'}
@@ -118,14 +119,14 @@ const A={
 async client(d){const n=norm(d.name);if(DB.clients.some(c=>norm(c.name)==n||(d.nid&&c.nid==d.nid)))return toast('موكل مكرر',1);
 const k=DB.cases.find(c=>norm(c.opp)==n);if(k&&!await ask('⚠ تعارض مصالح',`<p>هذا الاسم مسجل كخصم في ${esc(cn(k.id))}. المتابعة؟</p>`))return;
 DB.clients.push({id:uid(),...d,name:d.name.trim()});aud('موكل',d.name);done('تم حفظ الموكل')},
-async case(d){const no=norm(d.no);if(DB.cases.some(c=>norm(c.court)==norm(d.court)&&c.no==no&&c.yr==d.yr))return toast('قضية مكررة',1);
+async case(d){if(!full()&&DB.cases.length>=10){go('data');return toast('النسخة التجريبية محدودة بـ ١٠ قضايا — فعّل الترخيص',1)}const no=norm(d.no);if(DB.cases.some(c=>norm(c.court)==norm(d.court)&&c.no==no&&c.yr==d.yr))return toast('قضية مكررة',1);
 const o=DB.clients.find(c=>norm(c.name)==norm(d.opp));if(o&&!await ask('⚠ تعارض مصالح',`<p>الخصم «${esc(o.name)}» موكل لدى المكتب. المتابعة؟</p>`))return;
 const id=uid();DB.cases.push({id,cl:d.cl,court:d.court.trim(),circ:d.circ,no,yr:d.yr,type:d.type,opp:d.opp.trim(),subj:d.subj,st:'متداولة',adj:0,last:td()});lg(id,'فتح القضية');aud('قضية',cn(id));done('تم حفظ القضية')},
 async status(i,s){get('cases',i).st=s;lg(i,'تغيير الحالة: '+s);done()},
 async hear(d){DB.hearings.push({id:uid(),...d,done:false});lg(d.cid,'جلسة '+d.date+' — '+d.type);done('أُضيفت الجلسة')},
 async doneH(i){const h=get('hearings',i);h.done=true;lg(h.cid,'انعقدت جلسة '+h.date);done()},
 async adj(i){const r=await ask('تأجيل الجلسة',fld('date','الجلسة الجديدة','type=date required')+fld('why','السبب'));if(!r)return;const h=get('hearings',i);h.done=true;DB.hearings.push({...h,id:uid(),date:r.date,done:false});get('cases',h.cid).adj++;lg(h.cid,`تأجيل من ${h.date} إلى ${r.date} ${r.why||''}`);done('تم التأجيل')},
-async delH(i){if(!await ask('حذف الجلسة','<p>حذف نهائي؟</p>'))return;DB.hearings=DB.hearings.filter(h=>h.id!=i);done()},
+async delH(i){if(!await ask('حذف الجلسة','<p>حذف نهائي؟</p>'))return;DB.hearings=DB.hearings.filter(h=>h.id!=i);DB.del.push(i);done()},
 async task(d){DB.tasks.push({id:uid(),...d,done:false});done('أُضيفت المهمة')},
 async tog(i){const t=get('tasks',i);t.done=!t.done;done()},
 async fee(d){DB.fees.push({id:uid(),cid:d.cid,amt:+d.amt,kind:d.kind,date:td()});lg(d.cid,'اتفاق أتعاب '+N(d.amt));done('سُجّل الاتفاق')},
@@ -149,6 +150,7 @@ card(){const c=document.createElement('canvas');c.width=c.height=1080;const x=c.
 const col=DB.pays.reduce((a,p)=>a+p.amt,0);[['موكل',DB.clients.length],['قضية',DB.cases.length],['جلسة',DB.hearings.length],['درجة صحة المحفظة',Math.round(DB.cases.reduce((a,c)=>a+health(c).s,0)/(DB.cases.length||1))]].forEach(([l,n],i)=>{const X=300+(i%2)*480,Y=560+Math.floor(i/2)*190;x.fillStyle=i%3?'#fff':'#e0b65a';x.font='bold 84px Tahoma';x.fillText(n,X,Y);x.fillStyle='#9fb3c8';x.font='26px Tahoma';x.fillText(l,X,Y+40)});x.fillStyle='#9fb3c8';x.font='22px Tahoma';x.fillText(td()+' · '+DB.firm.name,540,975);
 show('بطاقة الإنجاز',`<img src="${c.toDataURL()}" style="width:100%;border-radius:12px"><p class="m">اضغط مطولًا على الصورة (أو زر الفأرة الأيمن) لحفظها ومشاركتها. لا تحتوي أسماء موكلين.</p>`)},
 async firm(d){DB.firm=d;done('حُفظت الترويسة')},
+async act(d){const o=await lic(d.k);if(!o)return toast('مفتاح غير صالح',1);LIC=o;try{localStorage.setItem('ldp2_lic',d.k.trim())}catch(e){}toast(o.expired?'انتهى هذا الترخيص':'تم التفعيل ✓',o.expired?1:0);render()},
 async wipe(){const r=await ask('⚠ حذف كل البيانات','<p>سيُحذف كل شيء من هذا الجهاز نهائيًا. اكتب: حذف</p>'+fld('x',''));if(r?.x==='حذف'){localStorage.removeItem(K);DB=null;lbl();$('#lock').hidden=false}}};
 /* views */
 const chart=()=>{const ms=[],d=new Date();for(let i=5;i>=0;i--)ms.push(new Date(d.getFullYear(),d.getMonth()-i,1).toLocaleDateString('en-CA').slice(0,7));const vs=ms.map(m=>DB.pays.filter(p=>p.date.startsWith(m)).reduce((a,p)=>a+p.amt,0)),mx=Math.max(...vs,1);
@@ -195,12 +197,40 @@ return`<div class="box"><h2>حاسبة المواعيد القانونية</h2><
 ${LC?`<div class="al w" style="margin-top:10px">${esc(LC.txt)}</div>${cs.length?`<form class="g" onsubmit="return S(event,'lcTask')">${sl('cid','القضية',cs)}<button class="b gd">أضفه كمهمة</button></form>`:''}`:''}<p class="m">مرجع إرشادي: يُرحَّل الميعاد لأول يوم عمل عند مصادفته الجمعة/السبت. تحقق من النص القانوني والعطلات الرسمية وميعاد المسافة قبل الاعتماد.</p></div>
 <div class="box"><h2>مولّد المستندات</h2>${cs.length?`<form class="g" onsubmit="return S(event,'gen')">${sl('cid','القضية',cs)}${sl('tpl','النموذج',Object.entries(T).map(([k,x])=>[k,x[0]]))}<button class="b">توليد</button></form>`:'<p class="m">أضف قضية أولًا.</p>'}</div>
 ${G?`<div class="box"><textarea class="doc" id="dt">${esc(G)}</textarea><p class="m">مسودة تنظيمية — راجع الصياغة والسند قبل الاعتماد.</p><button class="b" onclick="A.saveDoc()">💾 حفظ في ملف القضية</button> <button class="b s" onclick="$('#pr').style.whiteSpace='pre-wrap';$('#pr').textContent=$('#dt').value;print()">🖨 طباعة</button></div>`:''}`},
-data(){const F=DB.firm;return`<div class="box"><h2>الأمان والنسخ الاحتياطي</h2><p class="m">قاعدة البيانات كاملة مشفّرة AES-256-GCM على هذا المتصفح، ولا تُرسَل لأي خادم. فقدان كلمة المرور = فقدان البيانات، وحذف بيانات المتصفح يمسحها؛ لذا احتفظ بنسخة مشفّرة دائمًا.</p><button class="b" onclick="A.expo()">⬇ نسخة مشفّرة</button> <button class="b s" onclick="A.imp()">⬆ استيراد ودمج</button> <button class="b s" onclick="A.demo()">بيانات تجريبية</button> <button class="b d" onclick="A.wipe()">حذف الكل</button></div>
+data(){const F=DB.firm;return`${cloudBox()}<div class="box"><h2>الترخيص</h2><p>${full()?`<span class="chip" style="color:var(--ok);border-color:var(--ok)">✔ مرخّص: ${esc(LIC.firm)} · ${LIC.exp?'حتى '+LIC.exp:'دائم'}</span>`:`<span class="chip">نسخة تجريبية — ${DB.cases.length}/10 قضايا${LIC?.expired?' (انتهى الترخيص)':''}</span>`}</p><form class="g" onsubmit="return S(event,'act')"><label class="w">مفتاح التفعيل<textarea name="k" rows="3" required></textarea></label><button class="b gd">تفعيل</button></form></div><div class="box"><h2>الأمان والنسخ الاحتياطي</h2><p class="m">قاعدة البيانات كاملة مشفّرة AES-256-GCM على هذا المتصفح، ولا تُرسَل لأي خادم. فقدان كلمة المرور = فقدان البيانات، وحذف بيانات المتصفح يمسحها؛ لذا احتفظ بنسخة مشفّرة دائمًا.</p><button class="b" onclick="A.expo()">⬇ نسخة مشفّرة</button> <button class="b s" onclick="A.imp()">⬆ استيراد ودمج</button> <button class="b s" onclick="A.demo()">بيانات تجريبية</button> <button class="b d" onclick="A.wipe()">حذف الكل</button></div>
 <div class="box"><h2>ترويسة المكتب</h2><form class="g" onsubmit="return S(event,'firm')">${fld('name','اسم المكتب','value="'+esc(F.name)+'"')}${fld('addr','العنوان','value="'+esc(F.addr)+'"')}${fld('phone','الهاتف','value="'+esc(F.phone)+'"')}<button class="b">حفظ</button></form></div>
 <div class="box"><h2>سجل التدقيق</h2><table>${DB.audit.slice(0,60).map(a=>`<tr><td class="m">${a.ts.slice(0,16).replace('T',' ')}</td><td><span class="chip">${esc(a.k)}</span></td><td>${esc(a.t)}</td></tr>`).join('')}</table></div>`}};
-A.delC=async i=>{if(!await ask('حذف الموكل','<p>حذف نهائي؟</p>'))return;DB.clients=DB.clients.filter(c=>c.id!=i);sel=null;v='clients';done()};
+A.delC=async i=>{if(!await ask('حذف الموكل','<p>حذف نهائي؟</p>'))return;DB.clients=DB.clients.filter(c=>c.id!=i);DB.del.push(i);sel=null;v='clients';done()};
 const flt=(i,t)=>{const q=norm(i.value);document.querySelectorAll('#'+t+' tr').forEach(r=>r.style.display=r.dataset.s.includes(q)?'':'none')};
 const mv=n=>{cm.setMonth(cm.getMonth()+n);render()};
+const PUB={"kty":"EC","crv":"P-256","x":"9Pd2oV6dARH2gapSVHHRCvsqcfEf5Bw-PRTRVnL9TnY","y":"x3FPNLXBveGKWCUAi5WuB9morkOBukCKgylKt1V_PgI"};
+let LIC=null;const u8=s=>ub(s.replace(/-/g,'+').replace(/_/g,'/')),full=()=>LIC&&!LIC.expired;
+async function lic(tok){try{const [p,s]=tok.trim().split('.'),k=await crypto.subtle.importKey('jwk',PUB,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);
+if(!await crypto.subtle.verify({name:'ECDSA',hash:'SHA-256'},k,u8(s),te.encode(p)))return null;const o=JSON.parse(new TextDecoder().decode(u8(p)));return o.exp&&o.exp<td()?{...o,expired:true}:o}catch(e){return null}}
+(async()=>{try{const t=localStorage.getItem('ldp2_lic');if(t)LIC=await lic(t)}catch(e){}})();
+/* cloud sync: Supabase REST. Only the ENCRYPTED vault leaves the device. Fill CFG to enable. */
+const CFG={url:'https://hsnoitmdhyrdwqjksyfk.supabase.co',key:'sb_publishable_7qZK4FmRuQqUFKlRGZ2j2g_mPTOj2Rk'};
+let SES=null,syncT;try{SES=JSON.parse(localStorage.getItem('ldp2_ses')||'null')}catch(e){}
+const cloudOn=()=>!!(CFG.url&&CFG.key),HS={};
+function stamp(q){for(const l in DB)if(Array.isArray(DB[l])&&l!='audit'&&l!='del')for(const x of DB[l]){const{_u,...r}=x,h=JSON.stringify(r);if(HS[x.id]!==h){HS[x.id]=h;if(!q)x._u=Date.now()}}}
+const mrg=(a,o)=>{a.del=[...new Set([...(a.del||[]),...(o.del||[])])];const L=l=>Array.isArray(a[l])&&l!='audit'&&l!='del';for(const l in a)if(L(l))for(const x of o[l]||[]){const i=a[l].findIndex(e=>e.id===x.id);if(i<0)a[l].push(x);else if((x._u||0)>(a[l][i]._u||0))a[l][i]=x}for(const l in a)if(L(l))a[l]=a[l].filter(x=>!a.del.includes(x.id))};
+const setSes=j=>{SES={access_token:j.access_token,refresh_token:j.refresh_token,email:j.user?.email||SES?.email};try{localStorage.setItem('ldp2_ses',JSON.stringify(SES))}catch(e){}};
+async function refresh(){const r=await fetch(CFG.url+'/auth/v1/token?grant_type=refresh_token',{method:'POST',headers:{apikey:CFG.key,'Content-Type':'application/json'},body:JSON.stringify({refresh_token:SES.refresh_token})});if(!r.ok){SES=null;localStorage.removeItem('ldp2_ses');return false}setSes(await r.json());return true}
+async function cf(p,o={},retry=true){const h={apikey:CFG.key,'Content-Type':'application/json',...(o.headers||{})};if(SES)h.Authorization='Bearer '+SES.access_token;const r=await fetch(CFG.url+p,{...o,headers:h});return r.status==401&&SES&&retry&&await refresh()?cf(p,o,false):r}
+async function auth(kind,email,password){const r=await fetch(CFG.url+(kind=='up'?'/auth/v1/signup':'/auth/v1/token?grant_type=password'),{method:'POST',headers:{apikey:CFG.key,'Content-Type':'application/json'},body:JSON.stringify({email,password})}),j=await r.json();if(!r.ok||!j.access_token)throw new Error(j.msg||j.error_description||'تعذر الدخول — إن كان تأكيد البريد مطلوبًا فافتح رسالة التأكيد ثم سجّل الدخول');setSes(j)}
+async function pull(){const r=await cf('/rest/v1/vaults?select=blob,version');if(!r.ok)throw new Error('فشل الجلب');return(await r.json())[0]||null}
+async function push(){const blob=await enc(JSON.stringify(DB)),ver=+localStorage.getItem('ldp2_ver')||0;
+const r=ver?await cf('/rest/v1/vaults?version=eq.'+ver,{method:'PATCH',headers:{Prefer:'return=representation'},body:JSON.stringify({blob,version:ver+1})}):await cf('/rest/v1/vaults',{method:'POST',headers:{Prefer:'return=representation'},body:JSON.stringify({blob,version:1})});
+const a=r.ok?await r.json():[];if(a.length){localStorage.setItem('ldp2_ver',a[0].version);return'ok'}return'conflict'}
+async function syncNow(m){if(!SES||!DB||!cloudOn())return;try{let s=await push();if(s=='conflict'){const rm=await pull();if(rm){mrg(DB,JSON.parse(await dec(rm.blob,KEY)));localStorage.setItem('ldp2_ver',rm.version);stamp(1);await sv();s=await push();render()}}
+m&&toast(s=='ok'?'تمت المزامنة ✓':'تعذرت المزامنة',s=='ok'?0:1)}catch(e){m&&toast('تعذرت المزامنة — تحقق من الاتصال أو كلمة مرور الخزنة',1)}}
+A.cloud=async d=>{if(!cloudOn())return toast('لم تُضبط إعدادات الخادم',1);try{await auth(d.kind,d.email,d.pw)}catch(e){return toast(e.message,1)}
+let rm;try{rm=await pull()}catch(e){return toast(e.message,1)}
+if(rm){const r=await ask('كلمة مرور الخزنة',fld('p','كلمة مرور التشفير المستخدمة عند إنشاء الخزنة','type=password required'));if(!r)return;
+try{const k=await dk(r.p,ub(rm.blob.s)),o=JSON.parse(await dec(rm.blob,k));mrg(o,DB);DB=Object.assign(blank(),o);SALT=ub(rm.blob.s);KEY=k;localStorage.setItem('ldp2_ver',rm.version)}catch(e){return toast('كلمة مرور الخزنة غير صحيحة',1)}}else localStorage.removeItem('ldp2_ver');
+stamp(1);await sv();await syncNow(1);render()};
+A.out=()=>{SES=null;localStorage.removeItem('ldp2_ses');localStorage.removeItem('ldp2_ver');render()};
+const cloudBox=()=>!cloudOn()?'':`<div class="box"><h2>الحساب السحابي والمزامنة</h2>${SES?`<p><span class="chip" style="color:var(--ok);border-color:var(--ok)">✔ ${esc(SES.email)}</span> <span class="m">نسخة ${localStorage.getItem('ldp2_ver')||'—'}</span></p><button class="b" onclick="syncNow(1)">مزامنة الآن</button> <button class="b s" onclick="A.out()">تسجيل خروج</button>`:`<form class="g" onsubmit="return S(event,'cloud')">${sl('kind','',[['in','دخول'],['up','حساب جديد']])}${fld('email','البريد','type=email required')}${fld('pw','كلمة مرور الحساب','type=password required minlength=8')}<button class="b gd">متابعة</button></form>`}<p class="m">يُشفَّر المحتوى على جهازك قبل الرفع بكلمة مرور الخزنة، ولا تغادر هذه الكلمة جهازك. الخادم لا يرى بياناتك، ولا يمكن استرجاعها إن فقدت كلمة مرور الخزنة.</p></div>`;
 const NAV=[['dash','الرئيسية'],['clients','الموكلون'],['cases','القضايا'],['cal','الجلسات'],['fin','المالية'],['tools','الأدوات'],['data','النظام']];
 function go(x,i=null){v=x;sel=i;render();scrollTo(0,0)}
 function render(){if(!DB)return;$('#nv').innerHTML=NAV.map(([k,t])=>`<button class="${k==v?'on':''}" onclick="go('${k}')">${t}</button>`).join('');$('#app').innerHTML=V[v]()}
